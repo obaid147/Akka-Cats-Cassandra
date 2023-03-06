@@ -15,6 +15,10 @@ object Validation extends App{
   type ValidationResult[A] = ValidatedNel[ValidationFailure, A]
 
 
+  // usage
+  def required[A](value: A)(implicit req: Required[A]): Boolean = req(value)
+  def minimum[A](value: A, threshold: Double)(implicit min: Minimum[A]): Boolean = min(value, threshold)
+
   // field must be present
   trait Required[A] extends (A => Boolean)
 
@@ -44,5 +48,22 @@ object Validation extends App{
   }
 
   // "main" API
+  //def validateMinimum[A](value: A, threshold: Double, fieldName: String)(implicit min: Minimum[A]): ValidationResult[A] = {
+  def validateMinimum[A: Minimum](value: A, threshold: Double, fieldName: String): ValidationResult[A] = {
+    if(minimum(value, threshold)) value.validNel
+    else if (threshold == 0) NegativeValue(fieldName).invalidNel
+    else BelowMinimumValue(fieldName, threshold).invalidNel
+  }
 
+  def validateRequired[A: Required](value: A, fieldName: String): ValidationResult[A] =
+    if (required(value)) value.validNel
+    else EmptyField(fieldName).invalidNel
+
+  // general TypeClass for requests
+  trait Validator[A] {
+    def validate(value: A): ValidationResult[A]
+  }
+
+  def validateEntity[A](value: A)(implicit validator: Validator[A]): ValidationResult[A] =
+    validator.validate(value)
 }

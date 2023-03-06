@@ -1,0 +1,10 @@
+PersistentBankAccount.scala
+
+The Main BankAccount Actor will create persistent BankAccount Actor and after that it creates BankAccount,
+It will send the CreateBankAccount Message which will initialize the state and whenever bank actor receives
+some commands, those commands will reach back to me, So the bank actor will forward those to me so when i get an
+BalanceUpdate i am going to reply back to bank. This was all in "COMMAND-HANDLER" for messages that this persistent
+actor will receive.
+
+"EVENT-HANDLER":- running 2 arg function (state and event)
+

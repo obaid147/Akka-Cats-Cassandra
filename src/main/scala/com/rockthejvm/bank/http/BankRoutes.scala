@@ -13,6 +13,9 @@ import de.heikoseeberger.akkahttpcirce.FailFastCirceSupport._
 import akka.actor.typed.scaladsl.AskPattern._
 import akka.http.scaladsl.server.Route
 import akka.util.Timeout
+import cats.data.Validated.{Invalid, Valid}
+import com.rockthejvm.bank.http.Validation.{ValidationResult, Validator, validateEntity, validateMinimum, validateRequired}
+import cats.implicits._
 
 import scala.concurrent.duration.DurationInt
 import scala.concurrent.Future
@@ -22,10 +25,30 @@ case class BankAccountCreationRequest(user: String, currency: String, balance: D
   def toCommand(replyTo: ActorRef[Response]): Command = CreateBankAccount(user, currency, balance,  replyTo)
 }
 
+object BankAccountCreationRequest {
+  implicit val validator: Validator[BankAccountCreationRequest] = new Validator[BankAccountCreationRequest] {
+    override def validate(request: BankAccountCreationRequest): ValidationResult[BankAccountCreationRequest] = {
+      val userValidation = validateRequired(request.user, "user")
+      val currencyValidation = validateRequired(request.currency, "currency")
+      val balanceValidation = validateMinimum(request.balance, 0, "balance")
+
+      (userValidation, currencyValidation, balanceValidation).mapN(BankAccountCreationRequest.apply)
+    }
+  }
+}
+
 case class BankAccountUpdateRequest(currency: String, amount: Double) {
   def toCommand(id: String, replyTo: ActorRef[Response]): Command = UpdateBalance(id, currency, amount, replyTo)
 }
 
+object BankAccountUpdateRequest {
+  implicit val validator: Validator[BankAccountUpdateRequest] = (request: BankAccountUpdateRequest) => {
+    val currencyValidation = validateRequired(request.currency, "currency")
+    val balanceValidation = validateMinimum(request.amount, 0.01, "balance")
+
+    (currencyValidation, balanceValidation).mapN(BankAccountUpdateRequest.apply)
+  }
+}
 
 case class FailureResponse(reason: String)
 
@@ -43,6 +66,13 @@ class BankRouter(bank: ActorRef[Command])(implicit system: ActorSystem[_]) {
   def updateBankAccount(id: String, request:BankAccountUpdateRequest): Future[Response] =
     bank.ask(replyTo => request.toCommand(id, replyTo))
 
+  def validateRequest[R: Validator](request: R)(routeIfValid: Route): Route =
+    validateEntity(request) match {
+      case Valid(_) =>
+        routeIfValid
+      case Invalid(err) =>
+        complete(StatusCodes.BadRequest, FailureResponse(s"${err.toList.map(_.errorMessage).mkString(", ")}"))
+    }
     /*
       * POST /bank/
       *   payload: bank account creation request as JSON
@@ -72,17 +102,21 @@ class BankRouter(bank: ActorRef[Command])(implicit system: ActorSystem[_]) {
         post {
           // parse the payload
           entity(as[BankAccountCreationRequest]) { request =>
-            /*
-              - convert request into a Command for the bank actor
-              - send command to bank
-              - expect reply
-            */
-            onSuccess(createBankAccount(request)) {
-                  //- send back HTTP response
-              case BankAccountCreatedResponse(id) =>
+
+            //validation
+            validateRequest(request) {
+              /*
+                - convert request into a Command for the bank actor
+                - send command to bank
+                - expect reply
+              */
+              onSuccess(createBankAccount(request)) {
+                //- send back HTTP response
+                case BankAccountCreatedResponse(id) =>
                 respondWithHeader(Location(s"/bank/$id")) {
                   complete(StatusCodes.Created)
                 }
+              }
             }
           }
         }
@@ -100,17 +134,21 @@ class BankRouter(bank: ActorRef[Command])(implicit system: ActorSystem[_]) {
         } ~
         put { // PUT3
           entity(as[BankAccountUpdateRequest]) { request =>
-            /*
-            - transform req to a Command, case class BankAccountUpdateRequest
-            - send the command to bank
-            - expect reply*/
-            // TODO: validate the request
-            onSuccess(updateBankAccount(id, request)) {
-              /*- send bank an HTTP response*/
-              case BankAccountBalanceUpdatedResponse(Some(account)) =>
+
+            //validation
+            validateRequest(request) {
+              /*
+              - transform req to a Command, case class BankAccountUpdateRequest
+              - send the command to bank
+              - expect reply*/
+
+              onSuccess(updateBankAccount(id, request)) {
+                /*- send bank an HTTP response*/
+                case BankAccountBalanceUpdatedResponse(Some(account)) =>
                 complete(account)
-              case BankAccountBalanceUpdatedResponse(None) =>
+                case BankAccountBalanceUpdatedResponse(None) =>
                 complete(StatusCodes.BadRequest, FailureResponse(s"BankAccount $id cannot be found"))
+              }
             }
           }
 

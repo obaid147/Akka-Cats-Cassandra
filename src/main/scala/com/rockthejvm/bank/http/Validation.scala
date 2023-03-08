@@ -3,37 +3,33 @@ package com.rockthejvm.bank.http
 import cats.data.ValidatedNel
 import cats.implicits._
 
-
-object Validation extends App{
-
-  // validation failures
-  trait ValidationFailure {
-    def errorMessage: String
-  }
-
-  // based on cats.Validated
-  type ValidationResult[A] = ValidatedNel[ValidationFailure, A]
-
-
-  // usage
-  def required[A](value: A)(implicit req: Required[A]): Boolean = req(value)
-  def minimum[A](value: A, threshold: Double)(implicit min: Minimum[A]): Boolean = min(value, threshold)
+object Validation {
 
   // field must be present
   trait Required[A] extends (A => Boolean)
-
   // minimum value
   trait Minimum[A] extends ((A, Double) => Boolean) // for numerical fields
   trait MinimumAbs[A] extends ((A, Double) => Boolean) // for numerical fields
 
-  // would be `given` instances in Scala 3
-  // Type class instances
+  // TC instances
   implicit val requiredString: Required[String] = _.nonEmpty
   implicit val minimumInt: Minimum[Int] = _ >= _
   implicit val minimumDouble: Minimum[Double] = _ >= _
   implicit val minimumIntAbs: MinimumAbs[Int] = Math.abs(_) >= _
   implicit val minimumDoubleAbs: MinimumAbs[Double] = Math.abs(_) >= _
 
+  // usage
+  def required[A](value: A)(implicit req: Required[A]): Boolean = req(value)
+  def minimum[A](value: A, threshold: Double)(implicit min: Minimum[A]): Boolean = min(value, threshold)
+  def minimumAbs[A](value: A, threshold: Double)(implicit min: MinimumAbs[A]): Boolean = min(value, threshold)
+
+  // Validated
+  type ValidationResult[A] = ValidatedNel[ValidationFailure, A]
+
+  // validation failures
+  trait ValidationFailure {
+    def errorMessage: String
+  }
 
   case class EmptyField(fieldName: String) extends ValidationFailure {
     override def errorMessage = s"$fieldName is empty"
@@ -48,10 +44,14 @@ object Validation extends App{
   }
 
   // "main" API
-  //def validateMinimum[A](value: A, threshold: Double, fieldName: String)(implicit min: Minimum[A]): ValidationResult[A] = {
   def validateMinimum[A: Minimum](value: A, threshold: Double, fieldName: String): ValidationResult[A] = {
-    if(minimum(value, threshold)) value.validNel
+    if (minimum(value, threshold)) value.validNel
     else if (threshold == 0) NegativeValue(fieldName).invalidNel
+    else BelowMinimumValue(fieldName, threshold).invalidNel
+  }
+
+  def validateMinimumAbs[A: MinimumAbs](value: A, threshold: Double, fieldName: String): ValidationResult[A] = {
+    if (minimumAbs(value, threshold)) value.validNel
     else BelowMinimumValue(fieldName, threshold).invalidNel
   }
 
@@ -59,7 +59,7 @@ object Validation extends App{
     if (required(value)) value.validNel
     else EmptyField(fieldName).invalidNel
 
-  // general TypeClass for requests
+  // general TC for requests
   trait Validator[A] {
     def validate(value: A): ValidationResult[A]
   }
